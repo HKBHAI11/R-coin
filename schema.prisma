@@ -1,0 +1,124 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql" url = env("DATABASE_URL") }
+enum UserRole { MEMBER ADMIN }
+enum AccountStatus { EMAIL_PENDING ACTIVE SUSPENDED CLOSED }
+enum KycStatus { NOT_SUBMITTED PENDING APPROVED REJECTED }
+model User {
+ id String @id @default(uuid())
+ fullName String
+ email String @unique
+ mobile String @unique
+ country String
+ dateOfBirth DateTime
+ passwordHash String
+ emailVerifiedAt DateTime?
+ status AccountStatus @default(EMAIL_PENDING)
+ role UserRole @default(MEMBER)
+ kycStatus KycStatus @default(NOT_SUBMITTED)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ totpSecret String?
+ totpPendingSecret String?
+ mpinHash String?
+ mpinFailures Int @default(0)
+ mpinLockedUntil DateTime?
+ sessions AuthSession[]
+ wallet Wallet?
+ creditRequests CreditRequest[]
+}
+
+model EmailChallenge {
+ id String @id @default(uuid())
+ email String @unique
+ codeHash String
+ expiresAt DateTime
+ attempts Int @default(0)
+ lastSentAt DateTime @default(now())
+ createdAt DateTime @default(now())
+}
+model Wallet {
+ id String @id @default(uuid())
+ userId String @unique
+ user User @relation(fields:[userId],references:[id],onDelete:Restrict)
+ walletId String @unique
+ balanceMinor BigInt @default(0)
+ ledgerAccount LedgerAccount?
+ createdAt DateTime @default(now())
+}
+
+enum TicketCategory { REGISTRATION_HELP LOGIN_PROBLEM REPORT_BUG SUGGEST_IDEA OTHER }
+enum TicketStatus { SUBMITTED UNDER_REVIEW REPLIED RESOLVED }
+model SupportTicket {
+ id String @id @default(uuid())
+ trackingCode String @unique
+ name String
+ contactEmail String
+ category TicketCategory
+ message String @db.VarChar(4000)
+ status TicketStatus @default(SUBMITTED)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+}
+
+// Closed-test credit accounting. Never edit posted entries: compensate with new entries.
+enum LedgerAccountKind { USER_WALLET ISSUANCE RESERVE }
+enum LedgerTransactionKind { ADMIN_ISSUE TRANSFER REVERSAL }
+model LedgerAccount {
+ id String @id @default(uuid())
+ kind LedgerAccountKind
+ walletId String? @unique
+ wallet Wallet? @relation(fields:[walletId],references:[id])
+ entries LedgerEntry[]
+ createdAt DateTime @default(now())
+}
+model LedgerTransaction {
+ id String @id @default(uuid())
+ idempotencyKey String @unique
+ kind LedgerTransactionKind
+ initiatedById String
+ referenceId String?
+ entries LedgerEntry[]
+ createdAt DateTime @default(now())
+ @@index([initiatedById,createdAt])
+}
+model LedgerEntry {
+ id String @id @default(uuid())
+ transactionId String
+ transaction LedgerTransaction @relation(fields:[transactionId],references:[id])
+ accountId String
+ account LedgerAccount @relation(fields:[accountId],references:[id])
+ amountMinor BigInt
+ createdAt DateTime @default(now())
+ @@index([accountId,createdAt])
+}
+
+
+model AuthSession {
+ id String @id @default(uuid())
+ userId String
+ user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+ tokenHash String @unique
+ deviceLabel String @db.VarChar(100)
+ expiresAt DateTime
+ revokedAt DateTime?
+ createdAt DateTime @default(now())
+ @@index([userId, revokedAt])
+}
+
+// User-requested manual credit allocation; this is NOT a payment or cash deposit.
+enum CreditRequestStatus { PENDING APPROVED REJECTED CANCELLED }
+model CreditRequest {
+ id String @id @default(uuid())
+ userId String
+ user User @relation(fields:[userId],references:[id],onDelete:Restrict)
+ amountMinor BigInt
+ note String? @db.VarChar(500)
+ status CreditRequestStatus @default(PENDING)
+ reviewedById String?
+ reviewNote String? @db.VarChar(500)
+ ledgerTransactionId String? @unique
+ createdAt DateTime @default(now())
+ reviewedAt DateTime?
+ @@index([userId,createdAt])
+ @@index([status,createdAt])
+}
